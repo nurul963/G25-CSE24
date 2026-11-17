@@ -4,12 +4,14 @@ import { connectDB } from './config/db.js';
 import userRoute from './routes/userRoutes.js';
 import adminRoute from './routes/adminRoute.js';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 const app=express();
 app.use(express.json());
 const corsOption={
     origin:"*"
 };
 app.use(cors(corsOption));
+app.use(cookieParser());
 app.get("/",(req,resp)=>{
     return resp.status(200).json({
         message:"API is working...",

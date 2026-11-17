@@ -1,7 +1,24 @@
 import { User } from "../models/user.model.js";
 import bcrypt from 'bcryptjs'
-import { generateAccessToken, generateRefreshToken, getRefreshExpiry, hashToken } from "../utils/tokens.js";
+import { generateAccessToken, generateRefreshToken, getRefreshExpiry, hashToken, verifyRefreshToken } from "../utils/tokens.js";
 import RefreshSession from '../models/RefreshSession.js';
+const COOKIE_NAME = "refreshToken";
+const cookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "strict",
+  path: "/api/auth"
+};
+const setRefreshCookie = (res, token) => {
+  res.cookie(COOKIE_NAME, token, {
+    ...cookieOptions,
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+};
+const clearRefreshCookie = (res) => {
+  res.clearCookie(COOKIE_NAME, cookieOptions);
+};
+
 export const register=async(req,resp)=>{
     try {
         const {name,email,password,role}=req.body;
@@ -63,6 +80,7 @@ export const login=async(req,resp)=>{
             tokenHash:hashToken(refreshToken),
             expiresAt:getRefreshExpiry(refreshToken)
         })
+        setRefreshCookie(resp,refreshToken);
         return resp.status(200).json({
             message:"Login success",
             success:true,
@@ -77,4 +95,54 @@ export const login=async(req,resp)=>{
             success:false
         })
     }
+}
+export const refreshAccessToken=async(req,resp)=>{
+    const oldsession=req.cookies?.refreshToken;
+    if(!oldsession){
+       return resp.status(401).json({
+            message:"Token is missing",
+            success:false
+        }) 
+    }
+    const decode=verifyRefreshToken(oldsession);
+    // console.log(decode);
+    if(!decode || decode.type!=="refresh"){
+        return resp.status(401).json({
+            message:"Invalid Token",
+            success:false
+        })
+    }
+    const {sub,role}=decode;
+    const accessToken=generateAccessToken({_id:sub,role});
+    const refreshToken=generateRefreshToken({_id:sub,role});
+    const oldsessionToken=await RefreshSession.findOneAndUpdate(
+        {
+            userId:sub,
+            tokenHash:hashToken(oldsession),
+            expiresAt:{$gt: new Date()}
+        },
+        {
+            $set:{
+                revokedAt:new Date()
+            }
+        },
+        {new:true}
+    )
+    if(!oldsessionToken){
+        return resp.status(401).json({
+            message:"Refresh Token has been expired",
+            success:false
+        })
+    }
+     await RefreshSession.create({
+            userId:sub,
+            tokenHash:hashToken(refreshToken),
+            expiresAt:getRefreshExpiry(refreshToken)
+    });
+    setRefreshCookie(resp,refreshToken);
+    return resp.status(200).json({
+        message:"New Access Token",
+        success:true,
+        accessToken
+    })
 }
